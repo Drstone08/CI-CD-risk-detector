@@ -1,0 +1,61 @@
+Summary
+Authlib’s JOSE implementation accepts unbounded JWS/JWT header and signature segments. A remote attacker can craft a token whose base64url‑encoded header or signature spans hundreds of megabytes. During verification, Authlib decodes and parses the full input before it is rejected, driving CPU and memory consumption to hostile levels and enabling denial of service.
+
+Impact
+
+Attack vector: unauthenticated network attacker submits a malicious JWS/JWT.
+
+Effect: base64 decode + JSON/crypto processing of huge buffers pegs CPU and allocates large amounts of RAM; a single request can exhaust service capacity.
+
+Observed behaviour: on a test host, the legacy code verified a 500 MB header, consuming ~4 GB RSS and ~9 s CPU before failing.
+
+Severity: High. CVSS v3.1: AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H (7.5).
+
+Affected Versions
+Authlib ≤ 1.6.3 (and earlier) when verifying JWS/JWT tokens. Later snapshots with 256 KB header/signature limits are not affected.
+
+Proof of concept
+
+Local demo (do not run against third-party systems):
+Download jws_segment_dos_demo.py the PoC in direcotry authlib/
+Run following Command
+
+python3 jws_segment_dos_demo.py --variant both --sizes "500MB" --fork-per-case
+
+Environment: Python 3.13.6, Authlib 1.6.4, Linux x86_64, CPUs=8
+Sample output: Refined
+image
+
+The compilation script prints separate “[ATTACKER]” (token construction) and “[SERVER]” (Authlib verification) RSS deltas so defenders can distinguish client-side preparation from server-side amplification. Regression tests authlib/tests/dos/test_jose_dos.py further capture the issue; the saved original_util.py/original_jws.py reproductions still accept the malicious payload.
+
+Remediation
+
+Apply the upstream patch that introduces decoded size limits:
+
+MAX_HEADER_SEGMENT_BYTES = 256 KB
+
+MAX_SIGNATURE_SEGMENT_BYTES = 256 KB
+
+Enforce Limits in authlib/jose/util.extract_segment and _extract_signature.
+
+Deploy the patched release immediately.
+
+For additional defence in depth, reject JWS/JWT inputs above a few kilobytes at the proxy or WAF layer, and rate-limit verification endpoints.
+
+Workarounds (temporary)
+
+Enforce input size limits before handing tokens to Authlib.
+
+Use application-level throttling to reduce amplification risk.
+
+Resources
+
+Demo script: jws_segment_dos_demo.py
+
+Tests: authlib/tests/dos/test_jose_dos.py
+
+OWASP JWT Cheat Sheet (DoS guidance)
+
+References
+GHSA-pq5p-34cr-23v9
+authlib/authlib@867e3f8
